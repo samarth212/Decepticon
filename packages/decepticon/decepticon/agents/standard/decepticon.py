@@ -53,6 +53,7 @@ sub-agent: the launcher routes to its standalone assistant in Plan mode.
 from __future__ import annotations
 
 from typing import Any
+import os
 
 from deepagents.middleware.subagents import CompiledSubAgent
 from langchain.agents import create_agent
@@ -179,6 +180,10 @@ def create_decepticon_agent(
             sandbox=None,  # orchestrator has no bash tool / sandbox notification
             subagents=subagents,
         )
+    if os.environ.get("DECEPTICON_MEGATRON_RUNTIME") == "1":
+        from decepticon.integrations.megatron import runtime_middleware
+        middleware = [*middleware, *runtime_middleware(backend)]
+
     if system_prompt is None:
         system_prompt = load_prompt(_ROLE)
 
