@@ -16,6 +16,7 @@ from decepticon.tools.opplan import (
 )
 from decepticon.workflows import WorkflowSnapshot
 from decepticon_core.types.engagement import Objective
+from decepticon.middleware.investigation_submission import submission_path
 
 SEED_NOTE = 'megatron:fixed-first-investigation:v1'
 
@@ -124,6 +125,19 @@ class FixedInvestigationMiddleware(AgentMiddleware):
             '/workspace/findings/info_observations-and-negative-results.md. '
             'Independent finding_verifier and finding_reporter work follows in separate assignments.\n\n'
             'Operator-provided scope:\n' + scope + '\n\nLaunch instruction:\n' + instruction
+        )
+        description += (
+            '\n\nRequired structured return: before returning, write JSON to '
+            + submission_path(objective['id'])
+            + '. The parent runtime registers it automatically; do not create registry entries or canonical finding files. '
+            'Exact schema: {"schema_version":1,"outcome":"candidates","summary":"Tests, negatives, caveats",'
+            '"candidates":[{"key":"candidate-1","title":"Claim","slug":"candidate-claim",'
+            '"severity":"high","body":"Full claim, reproduction steps, controls, impact and caveats",'
+            '"evidence_paths":["findings/evidence/actual-proof.txt"]}]}. '
+            'Use actual saved nonempty evidence files, engagement-relative paths under an evidence directory. '
+            'No extra fields or verification verdicts. For no finding or blocked work use outcome '
+            '"no-finding" or "blocked", candidates: [], and explain coverage/blockers in summary. '
+            'This submission is required even when no candidate was found. Never invent evidence.'
         )
         return {
             'objectives': rows, 'plan_revision': revision,
