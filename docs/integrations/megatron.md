@@ -21,7 +21,23 @@ repository and built image revision before launching a job. Its dashboard, Tempo
 worker, job isolation, provider configuration and launch adapter remain downstream.
 The runtime modules must not be copied or patched into images by Megatron.
 
-This migration preserves the existing runtime behavior; it does not fix the
-remaining unregistered-investigator-output gap. Candidate registration still
-needs to become a native structured, idempotent handoff. Offline tests that begin
-with a registered candidate do not establish that the full agent flow works.
+The fixed investigator now writes a typed submission to
+`findings/submissions/<runtime-objective-uuid>.json`. The task assignment supplies
+the schema. On a successful investigator return, the parent validates every
+candidate and its saved evidence, then creates and commits registry entries.
+It assigns UUIDs and canonical paths; candidates always start unverified and
+draft. No coordinator create/commit tool calls are needed for registration.
+
+Registration is checkpointed before files are published, so publication retries
+reuse the same UUIDs and revisions. Duplicate operation keys with changed content
+are rejected. Invalid or missing submissions return a tool error; preserve the
+evidence and repair metadata instead of repeating target requests. Failed tasks
+and unrelated specialists cannot register through this path. No-finding and
+blocked submissions create coverage records, not vulnerability findings.
+
+Use a new job after rebuilding: earlier investigator assignments did not require
+this submission format. Existing verdict, OPPLAN, scope and finalization gates
+remain in force. The offline regression starts without a registry and exercises
+submission → registration → independent specialist context → reporting → final
+receipt, synchronously and asynchronously. Its agents and evidence are scripted;
+passing it does not establish that a live model completes the same flow.
