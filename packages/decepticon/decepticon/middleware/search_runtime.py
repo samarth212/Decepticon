@@ -386,6 +386,14 @@ class SearchRuntimeMiddleware(AgentMiddleware):
             and bool(request.state.get("fixed_investigation_id"))
             and args.get("task_id") == request.state.get("fixed_investigation_id")
         )
+        managed_reporter = (
+            os.environ.get("DECEPTICON_MEGATRON_RUNTIME") == "1"
+            and bool(request.state.get("fixed_submission_objective"))
+            and specialist_role == "finding_reporter"
+            and args.get("task_id") in (request.state.get("fixed_handoff_objective_ids") or [])
+            and any(row.get("id") == args.get("task_id") and row.get("workflow_stage") == "report"
+                    for row in request.state.get("objectives", []))
+        )
         role = "" if failed else specialist_role
         registry = registry_from_state(request.state.get("artifact_registry"))
         try:
@@ -431,10 +439,16 @@ class SearchRuntimeMiddleware(AgentMiddleware):
                     scope_digest=get_config().get("configurable", {}).get("research_scope_digest"),
                 ),
             )
+            if managed_reporter:
+                from decepticon.middleware.assessment import assemble_assessment
+                imported = assemble_assessment(imported,
+                    request.state.get("fixed_handoff_bindings") or {},
+                    scoped_backend(self.backend, request.state.get("workspace_path")))
             if imported != registry:
                 update["artifact_registry"] = imported.model_dump_json()
-                if fixed_investigator:
-                    update["fixed_submission_objective"] = args["task_id"]
+                if fixed_investigator or managed_reporter:
+                    if fixed_investigator:
+                        update["fixed_submission_objective"] = args["task_id"]
                 else:
                     imported = self._materialize(imported, request.state.get("workspace_path"))
                     update["artifact_registry"] = imported.model_dump_json()

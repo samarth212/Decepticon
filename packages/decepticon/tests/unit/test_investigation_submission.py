@@ -61,6 +61,9 @@ class ScriptedCoordinator(BaseChatModel):
         report = next((a for a in registry.artifacts.values() if a.draft.kind == 'assessment_report'), None)
         step = self.step
         self.step += 1
+        # Assessment creation/commit now happens in runtime code, without a model turn.
+        if step >= 7:
+            step += 2
         if step == 0:
             name, args = 'task', {'task_id': self.investigator, 'subagent_type': 'exploit', 'description': 'Write synthetic structured submission.'}
         elif step == 1:
@@ -75,10 +78,6 @@ class ScriptedCoordinator(BaseChatModel):
         elif step in (4, 9):
             stage = 'verify' if step == 4 else 'report'
             name, args = 'update_objective', {'objective_id': objectives[stage]['id'], 'status': 'completed', 'outcome': 'objective-met', 'evidence_refs': []}
-        elif step == 7:
-            name, args = 'create_artifact', {'operation_key': 'assessment', 'draft': {'kind': 'assessment_report', 'title': 'Offline fixture assessment', 'slug': 'fixture-assessment', 'body': 'Synthetic test only; no real vulnerability claim.', 'links': [{'relation': 'reports', 'document_uuid': str(finding.document_uuid), 'revision': finding.revision, 'content_hash': finding.content_hash}]}}
-        elif step == 8:
-            name, args = 'commit_artifact', {'request': {'document_uuid': str(report.document_uuid), 'expected_revision': 0, 'operation_key': 'assessment-commit', 'reason': 'Save fixture assessment'}}
         elif step == 10:
             name, args = 'review_search', {'request': {'rationale': 'All synthetic objectives reconciled.'}}
         elif step == 11:
@@ -285,7 +284,8 @@ class SubmissionTests(unittest.TestCase):
             CompiledSubAgent(name='finding_verifier', description='Fixture verifier', runnable=RunnableLambda(edit_finding('finding_verifier'))),
             CompiledSubAgent(name='finding_reporter', description='Fixture reporter', runnable=RunnableLambda(edit_finding('finding_reporter')))])
         subagents.tools = [planned_task_tool(subagents.tools[0], backend=self.backend)]
-        graph = create_agent(ScriptedCoordinator(root=self.root, investigator=self.identifier),
+        model = ScriptedCoordinator(root=self.root, investigator=self.identifier)
+        graph = create_agent(model,
             middleware=[Setup(), subagents, OPPLANMiddleware(backend=self.backend), SearchRuntimeMiddleware(self.backend),
                 FixedInvestigationMiddleware(self.backend), FixedHandoffMiddleware(self.backend)], checkpointer=InMemorySaver())
         config = {'configurable': {'thread_id': 'fixture', 'search_run_id': 'run', 'research_scope_digest': 'a' * 64}, 'recursion_limit': 200}
@@ -298,6 +298,10 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual([r.author.role for r in finding.revisions], ['exploit', 'finding_verifier', 'reporter'])
         self.assertEqual(finding.draft.metadata['verification_status'], 'verified')
         self.assertEqual(json.loads(result['search_receipt'])['disposition'], 'goal_met')
+        self.assertEqual(model.step, 11)  # No create_artifact/commit_artifact model calls.
+        report = next(a for a in registry.artifacts.values() if a.draft.kind == 'assessment_report')
+        self.assertEqual(report.draft.metadata['generated_by'], 'fixed-assessment-v1')
+        self.assertEqual(report.draft.links[0].revision, finding.revision)
 
     def test_sync_raw_submission_to_final_receipt(self):
         self.pipeline(False)

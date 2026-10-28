@@ -89,10 +89,12 @@ class FixedHandoffMiddleware(AgentMiddleware):
                      'Prepare the reviewed draft for ' + artifact.label,
                      identity + 'Read the independent verdict and evidence. Preserve that verdict; '
                      'complete and check the canonical finding only. Refuted or blocked claims remain '
-                     'coverage/limitations, not verified vulnerabilities. Return to the coordinator for '
-                     'the aggregate /workspace/report/security-assessment-report.md. No external submission.',
+                     'coverage/limitations, not verified vulnerabilities. The runtime assembles '
+                     '/workspace/report/security-assessment-report.md after all assigned findings are reviewed. '
+                     'Set report_status to complete when the canonical finding is ready and return. '
+                     'Do not write the aggregate report. No external submission.',
                      ['The canonical draft preserves the independent verdict and cited evidence.',
-                      'The coordinator saves and reviews /workspace/report/security-assessment-report.md before completion.']),
+                      'The runtime saves /workspace/report/security-assessment-report.md before objective acceptance.']),
                 ]
                 for identifier, stage, owner, dependency, title, description, criteria in specs:
                     note = HANDOFF_NOTE + key + ':' + stage
@@ -169,7 +171,9 @@ class FixedHandoffMiddleware(AgentMiddleware):
                 'Use the existing objective IDs; include the '
                 'assigned canonical UUID/path in each task description. Never self-verify. '
                 'Complete verification before reporting; produce honest coverage for rejected/blocked '
-                'claims. The coordinator owns the aggregate assessment. Plan replacement is unavailable '
+                'claims. The runtime creates and commits the aggregate assessment after reporter returns. '
+                'Inspect its registered UUID; do not create a second assessment. Accept report objectives, '
+                'then review_search and finalize_search using the existing report UUID. Plan replacement is unavailable '
                 'for this fixed handoff. Existing scope, budget, proof and finalization gates still apply.')
         content = list(request.system_message.content_blocks) if request.system_message else []
         content.append({'type': 'text', 'text': text})
