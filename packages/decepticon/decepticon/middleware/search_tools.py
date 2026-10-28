@@ -32,7 +32,7 @@ _OBJECTIVES = TypeAdapter(tuple[SearchObjective, ...])
 
 class ReviewSearchRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    plan_revision: int
+    plan_revision: int | None = None
     rationale: str
     next_objective_id: str | None = None
 
@@ -41,7 +41,7 @@ class FinalizeSearchRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     disposition: Disposition
     report_document_uuid: UUID
-    plan_revision: int
+    plan_revision: int | None = None
     reason: str
 
 
@@ -69,7 +69,7 @@ def build_search_tools(backend: BackendProtocol) -> list[BaseTool]:
     )
     def review_search(request: ReviewSearchRequest, runtime: ToolRuntime) -> Command[str]:
         plan_revision, rationale, next_objective_id = (
-            request.plan_revision,
+            int(runtime.state.get("plan_revision", 0)),
             request.rationale,
             request.next_objective_id,
         )
@@ -112,7 +112,7 @@ def build_search_tools(backend: BackendProtocol) -> list[BaseTool]:
         disposition, report_document_uuid, plan_revision, reason = (
             request.disposition,
             request.report_document_uuid,
-            request.plan_revision,
+            int(runtime.state.get("plan_revision", 0)),
             request.reason,
         )
         try:

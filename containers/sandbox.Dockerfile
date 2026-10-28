@@ -122,6 +122,12 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     "uvicorn>=0.30.0" \
     "deepagents>=0.5.0"
 
+# Install a pip-managed CA bundle alongside Debian's package. Debian's certifi
+# has no pip RECORD, so an ordinary dependency upgrade cannot uninstall it.
+# --no-deps keeps this compatibility step limited to certifi itself.
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed --no-deps \
+    "certifi>=2026.10.19"
+
 # ── Open-web acquisition engine (insane-search port, ADR-0010) ───────
 # decepticon/sandbox_web runs HERE, inside the sandbox, so all open-web
 # egress stays in sandbox-net behind the nftables allowlist. Python deps:

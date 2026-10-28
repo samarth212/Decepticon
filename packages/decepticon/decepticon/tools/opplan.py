@@ -18,6 +18,7 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from pydantic import ValidationError
 
+from decepticon.middleware.coordination import completion_evidence, successful_objective_task_return
 from decepticon.middleware.workflow_opplan import validate_workflow_plan
 from decepticon.tools.opplan_graph import PlanInspection, inspect_plan, unmet_prerequisites
 from decepticon.workflows import WorkflowError, WorkflowSnapshot
@@ -1078,7 +1079,7 @@ def build_opplan_tools(backend: BackendProtocol | None = None) -> list:
         status: str | None = None,
         notes: str | None = None,
         owner: str | None = None,
-        outcome: str | None = None,
+        outcome: ObjectiveOutcome | None = None,
         evidence_refs: list[str] | None = None,
         tool_call_id: Annotated[str, InjectedToolCallId] = "",
     ) -> Command[Any]:
@@ -1102,6 +1103,11 @@ def build_opplan_tools(backend: BackendProtocol | None = None) -> list:
             )
 
         versioned = bool(state.get("plan_revision", 0))
+        managed = objective_id == state.get("fixed_investigation_id") or objective_id in state.get("fixed_handoff_objective_ids", [])
+        if managed and status == "completed":
+            if target.get("status") == "pending" and successful_objective_task_return(state, objective_id):
+                target["status"] = "in-progress"
+            evidence_refs = completion_evidence(state, target, evidence_refs)
         if versioned and status == "blocked":
             if (outcome or target.get("outcome")) not in {
                 "inconclusive",

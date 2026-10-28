@@ -1,0 +1,43 @@
+# Megatron local runtime
+
+Megatron consumes this local fork, not an upstream release image or a second
+checkout. Its build records this repository's committed revision; changes must
+be committed and the image rebuilt before a new job adopts them.
+
+`DECEPTICON_MEGATRON_RUNTIME=1` opts the coordinator into the native
+`decepticon.integrations.megatron` middleware stack. It retains trusted workflow
+selection, immutable pins, OPPLAN validation, authorization, independent-verdict
+imports and finalization checks. The hooks execute only their bound bounty work;
+they do not authorize targets or relax the supplied rules of engagement.
+
+The fork owns fixed investigation/handoff identity, the planning-progress cutoff,
+server-bound revision bookkeeping and saved-proof validation. Shared cross-process
+tool slots are enabled by `MEGATRON_LIMITS_DIR`; without that setting the existing
+per-instance concurrency behavior remains available. Configured USD budgets fail
+closed when accounting cannot provide a trustworthy spend value.
+
+The integration contract is `megatron-local-v1`. Megatron validates the source
+repository and built image revision before launching a job. Its dashboard, Temporal
+worker, job isolation, provider configuration and launch adapter remain downstream.
+The runtime modules must not be copied or patched into images by Megatron.
+
+The fixed investigator now writes a typed submission to
+`findings/submissions/<runtime-objective-uuid>.json`. The task assignment supplies
+the schema. On a successful investigator return, the parent validates every
+candidate and its saved evidence, then creates and commits registry entries.
+It assigns UUIDs and canonical paths; candidates always start unverified and
+draft. No coordinator create/commit tool calls are needed for registration.
+
+Registration is checkpointed before files are published, so publication retries
+reuse the same UUIDs and revisions. Duplicate operation keys with changed content
+are rejected. Invalid or missing submissions return a tool error; preserve the
+evidence and repair metadata instead of repeating target requests. Failed tasks
+and unrelated specialists cannot register through this path. No-finding and
+blocked submissions create coverage records, not vulnerability findings.
+
+Use a new job after rebuilding: earlier investigator assignments did not require
+this submission format. Existing verdict, OPPLAN, scope and finalization gates
+remain in force. The offline regression starts without a registry and exercises
+submission → registration → independent specialist context → reporting → final
+receipt, synchronously and asynchronously. Its agents and evidence are scripted;
+passing it does not establish that a live model completes the same flow.

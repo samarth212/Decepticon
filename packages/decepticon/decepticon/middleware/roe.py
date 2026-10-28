@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import logging
 import os
 import random
@@ -362,7 +363,7 @@ class RoEGuardrailMiddleware(AgentMiddleware):
             self._record_throttle(request, tool_name, wait)
             time.sleep(wait)
         gated = tool_name in self._gated
-        with self._sync_gate(rules, gated):
+        with self._sync_gate(rules, gated, request.state.get("workspace_path")):
             result = handler(request)
         return result
 
@@ -379,7 +380,7 @@ class RoEGuardrailMiddleware(AgentMiddleware):
             self._record_throttle(request, tool_name, wait)
             await asyncio.sleep(wait)
         gated = tool_name in self._gated
-        async with self._async_gate(rules, gated):
+        async with self._async_gate(rules, gated, request.state.get("workspace_path")):
             result = await handler(request)
         return result
 
@@ -393,7 +394,13 @@ class RoEGuardrailMiddleware(AgentMiddleware):
             return self._conc_limit
 
     @contextmanager
-    def _sync_gate(self, rules: MachineEnforcement, gated: bool):
+    def _sync_gate(self, rules: MachineEnforcement, gated: bool, workspace=None):
+        if gated and rules.max_concurrent_connections and os.environ.get("MEGATRON_LIMITS_DIR"):
+            from decepticon.middleware.shared_limits import sync_gate
+
+            with sync_gate(workspace, rules.max_concurrent_connections):
+                yield
+            return
         limit = self._resolve_limit(rules) if gated else None
         if limit is None:
             yield
@@ -409,7 +416,13 @@ class RoEGuardrailMiddleware(AgentMiddleware):
             sema.release()
 
     @asynccontextmanager
-    async def _async_gate(self, rules: MachineEnforcement, gated: bool):
+    async def _async_gate(self, rules: MachineEnforcement, gated: bool, workspace=None):
+        if gated and rules.max_concurrent_connections and os.environ.get("MEGATRON_LIMITS_DIR"):
+            from decepticon.middleware.shared_limits import async_gate
+
+            async with async_gate(workspace, rules.max_concurrent_connections):
+                yield
+            return
         limit = self._resolve_limit(rules) if gated else None
         if limit is None:
             yield

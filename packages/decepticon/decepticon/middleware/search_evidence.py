@@ -71,9 +71,12 @@ def evidence_hashes(draft: ArtifactDraft, backend: BackendProtocol) -> dict[str,
                 paths.append(str(item["path"]))
     hashes: dict[str, str] = {}
     for path in dict.fromkeys(paths):
-        relative = evidence_path(path)
+        try:
+            relative = evidence_path(path)
+        except ValueError:
+            raise ArtifactError("Use engagement-relative evidence_pointer/evidence_manifest paths under an evidence directory") from None
         response = backend.download_files(["/workspace/" + relative])
-        if len(response) != 1 or response[0].error or response[0].content is None:
+        if len(response) != 1 or response[0].error or not response[0].content:
             raise ArtifactError(f"Missing exact evidence bytes: {relative}")
         hashes[relative] = hashlib.sha256(response[0].content).hexdigest()
     return hashes
@@ -122,11 +125,14 @@ def import_specialist_edits(
         )
         role = "reporter" if context.role in _REPORTERS else "finding_verifier"
         if role == "finding_verifier":
+            hashes = evidence_hashes(draft, backend)
+            if draft.metadata.get("verification_status") == "verified" and not hashes:
+                raise ArtifactError("Verified verdict requires evidence_pointer or evidence_manifest referencing saved nonempty proof files. Repair metadata using the existing independent proof; do not repeat target requests just to repair the document.")
             draft = draft.model_copy(
                 update={
                     "metadata": {
                         **draft.metadata,
-                        "verified_evidence_hashes": evidence_hashes(draft, backend),
+                        "verified_evidence_hashes": hashes,
                         "verified_scope_digest": handoff.scope_digest,
                     }
                 }

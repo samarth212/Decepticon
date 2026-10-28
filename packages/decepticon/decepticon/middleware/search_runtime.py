@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from threading import Lock
@@ -114,6 +115,7 @@ never closes the run. All target activity remains bounded by the approved RoE.
 
 
 class SearchRuntimeState(AgentState):
+    fixed_submission_objective: NotRequired[Annotated[str, OmitFromInput]]
     artifact_registry: NotRequired[Annotated[str, OmitFromInput]]
     search_state: NotRequired[Annotated[str, OmitFromInput]]
     search_receipt: NotRequired[Annotated[str, OmitFromInput]]
@@ -191,6 +193,20 @@ class SearchRuntimeMiddleware(AgentMiddleware):
         return bool(state.get("search_state")) and get_config().get("configurable", {}).get(
             "search_policy_version"
         ) in {None, 2}
+
+    def before_model(self, state, runtime):
+        # Registration is checkpointed before filesystem publication. A process
+        # crash/retry therefore reuses the same UUIDs and immutable revisions.
+        if not state.get("fixed_submission_objective"):
+            return None
+        registry = registry_from_state(state.get("artifact_registry"))
+        if registry.materialized:
+            return None
+        published = self._materialize(registry, state.get("workspace_path"))
+        return {"artifact_registry": published.model_dump_json()}
+
+    async def abefore_model(self, state, runtime):
+        return await to_thread.run_sync(self.before_model, state, runtime)
 
     def _request(self, request: ModelRequest) -> ModelRequest:
         if not self._enabled(request.state):
@@ -299,6 +315,15 @@ class SearchRuntimeMiddleware(AgentMiddleware):
                     status="error",
                 )
             count = sum(call["name"] == "task" for call in calls)
+            if count > 1 and request.state.get("fixed_investigation_id") and any(
+                call["name"] == "task"
+                and call["args"].get("task_id") == request.state["fixed_investigation_id"]
+                for call in calls
+            ):
+                return ToolMessage(
+                    content="Serialize the fixed investigator return because it registers shared documents.",
+                    tool_call_id=request.tool_call["id"], status="error",
+                )
             if count > 1 and any(
                 call["name"] == "task" and call["args"].get("subagent_type") in _DOCUMENT_WRITERS
                 for call in calls
@@ -355,6 +380,12 @@ class SearchRuntimeMiddleware(AgentMiddleware):
             for message in update.get("messages", [])
         )
         specialist_role = str(args.get("subagent_type", ""))
+        fixed_investigator = (
+            os.environ.get("DECEPTICON_MEGATRON_RUNTIME") == "1"
+            and specialist_role == "exploit"
+            and bool(request.state.get("fixed_investigation_id"))
+            and args.get("task_id") == request.state.get("fixed_investigation_id")
+        )
         role = "" if failed else specialist_role
         registry = registry_from_state(request.state.get("artifact_registry"))
         try:
@@ -380,8 +411,15 @@ class SearchRuntimeMiddleware(AgentMiddleware):
                         },
                     }
                 )
+            if fixed_investigator:
+                from decepticon.middleware.investigation_submission import register_submission
+                imported = register_submission(registry,
+                    scoped_backend(self.backend, request.state.get("workspace_path")),
+                    args["task_id"])
+            else:
+                imported = registry
             imported = import_specialist_edits(
-                registry,
+                imported,
                 scoped_backend(self.backend, request.state.get("workspace_path")),
                 SpecialistHandoff(
                     context=ActorContext(
@@ -395,8 +433,11 @@ class SearchRuntimeMiddleware(AgentMiddleware):
             )
             if imported != registry:
                 update["artifact_registry"] = imported.model_dump_json()
-                imported = self._materialize(imported, request.state.get("workspace_path"))
-                update["artifact_registry"] = imported.model_dump_json()
+                if fixed_investigator:
+                    update["fixed_submission_objective"] = args["task_id"]
+                else:
+                    imported = self._materialize(imported, request.state.get("workspace_path"))
+                    update["artifact_registry"] = imported.model_dump_json()
         except MaterializationError as error:
             # Keep a successfully imported specialist revision for retry.
             # Failed-return restoration has no imported state and falls back

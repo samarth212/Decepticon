@@ -33,7 +33,7 @@ class PlannedTaskSchema(BaseModel):
     description: str = Field(description="Complete subagent handoff and expected output")
     subagent_type: str = Field(description="One registered specialist type")
     task_id: str = Field(description="Current OPPLAN leaf objective ID, issued by the server")
-    plan_revision: int = Field(ge=0, description="Revision observed when selecting task_id")
+    plan_revision: int = Field(default=0, ge=0, description="Optional legacy hint; runtime binds the current plan revision")
 
 
 def validate_task_plan(
@@ -120,13 +120,13 @@ def planned_task_tool(original: BaseTool, *, backend: BackendProtocol | None = N
         description: str,
         subagent_type: str,
         task_id: str,
-        plan_revision: int,
-        runtime: ToolRuntime,
+        plan_revision: int = 0,
+        runtime: ToolRuntime = None,
     ) -> Any:
         reason = validate_task_plan(
             runtime.state,
             task_id=task_id,
-            plan_revision=plan_revision,
+            plan_revision=runtime.state.get("plan_revision", 0),
             subagent_type=subagent_type,
             backend=backend,
         )
@@ -149,15 +149,15 @@ def planned_task_tool(original: BaseTool, *, backend: BackendProtocol | None = N
         description: str,
         subagent_type: str,
         task_id: str,
-        plan_revision: int,
-        runtime: ToolRuntime,
+        plan_revision: int = 0,
+        runtime: ToolRuntime = None,
     ) -> Any:
         reason = await to_thread.run_sync(
             partial(
                 validate_task_plan,
                 runtime.state,
                 task_id=task_id,
-                plan_revision=plan_revision,
+                plan_revision=runtime.state.get("plan_revision", 0),
                 subagent_type=subagent_type,
                 backend=backend,
             )

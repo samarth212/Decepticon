@@ -19,8 +19,7 @@ middleware tags every outbound completion with its scope keys
 (``engagement:<slug>`` and ``agent:<slug>:<agent>`` via request
 ``metadata.tags``), the proxy records them in its spend logs, and
 ``/spend/tags`` returns the cumulative USD total per tag. We query it
-lazily before each model call and cache for the poll interval so we
-don't hammer the proxy on tight inference loops.
+before every budget-controlled model call. Accounting errors block the call.
 
 Enforcement
 -----------
@@ -59,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import threading
 import time
@@ -83,6 +83,10 @@ log = logging.getLogger(__name__)
 _SPEND_UNTRACKED_METHODS: frozenset[AuthMethod] = frozenset(
     {AuthMethod.CHEAPER_INFERENCE_API, AuthMethod.KIMI_API}
 )
+
+
+class BudgetAccountingUnavailable(RuntimeError):
+    """A configured budget cannot establish a trustworthy current spend."""
 
 
 class BudgetExceeded(RuntimeError):
@@ -322,17 +326,18 @@ class BudgetEnforcementMiddleware(AgentMiddleware):
         # concurrent agents onto a single fetch (the loser sees the warm
         # cache), and so the soft-warn check-then-add can't double-fire.
         with self._lock:
-            cached = self._cache.get(scope_key)
+            cached = None
             if cached is None:
                 try:
                     cached = float(self._spend_provider(scope_key))
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "spend provider failed for scope=%s: %s; not enforcing this turn",
-                        scope_key,
-                        exc,
+                except Exception as exc:
+                    raise BudgetAccountingUnavailable(
+                        f"Spend lookup failed for {scope_key}; model call blocked"
+                    ) from exc
+                if not math.isfinite(cached) or cached < 0:
+                    raise BudgetAccountingUnavailable(
+                        f"Invalid spend for {scope_key}; model call blocked"
                     )
-                    return
                 self._cache.set(scope_key, cached)
             frac = cached / cap_usd if cap_usd else 0.0
             from decepticon.middleware.run_controls import emit_custom_event
@@ -418,10 +423,8 @@ def _default_litellm_spend_provider(scope_key: str) -> float:
     factory uses (``DECEPTICON_LLM__PROXY_URL`` / ``__PROXY_API_KEY``), so
     any environment that can run an agent can also enforce its budget.
 
-    Returns 0.0 on any failure — the middleware treats provider exceptions
-    as "no data this turn, don't enforce" rather than as a hard error,
-    so a transient proxy blip can't terminate an active engagement. A
-    scope tag with no recorded spend also yields 0.0.
+    Fail closed on configuration, transport, HTTP, and response errors.
+    A valid response with no matching tag means no recorded spend.
     """
     try:
         from decepticon_core.utils.config import load_config  # noqa: PLC0415
@@ -431,7 +434,7 @@ def _default_litellm_spend_provider(scope_key: str) -> float:
         api_key = config.llm.proxy_api_key
     except Exception as exc:  # noqa: BLE001
         log.warning("cannot resolve LiteLLM proxy config for budget query: %s", exc)
-        return 0.0
+        raise BudgetAccountingUnavailable("Cannot resolve accounting configuration") from exc
     try:
         import httpx  # noqa: PLC0415
 
@@ -441,10 +444,21 @@ def _default_litellm_spend_provider(scope_key: str) -> float:
             timeout=10.0,
         )
         resp.raise_for_status()
-        for row in resp.json():
-            if row.get("individual_request_tag") == scope_key:
-                return float(row.get("total_spend") or 0.0)
-        return 0.0
-    except Exception as exc:  # noqa: BLE001
-        log.warning("LiteLLM spend query failed for scope=%s: %s", scope_key, exc)
-        return 0.0
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise ValueError("spend response must be a list")
+        result = 0.0
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("individual_request_tag"), str):
+                raise ValueError("invalid spend row")
+            raw = row.get("total_spend")
+            if raw is None or isinstance(raw, bool):
+                raise ValueError("missing or invalid spend")
+            spent = float(raw)
+            if not math.isfinite(spent) or spent < 0:
+                raise ValueError("invalid spend")
+            if row["individual_request_tag"] == scope_key:
+                result += spent
+        return result
+    except Exception as exc:
+        raise BudgetAccountingUnavailable("LiteLLM accounting unavailable; model call blocked") from exc
